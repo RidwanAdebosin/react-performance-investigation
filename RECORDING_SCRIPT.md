@@ -146,11 +146,11 @@ Perform these exactly, in this order; you will repeat them identically after the
 
 **Do:** With the **Flamegraph** view selected (dropdown at the top of the Profiler), hover and click each bar; read the real values:
 - Click **App** → side panel shows render duration and "Why did this render?" → expect **Hooks changed** (the count state). Read it.
-- Click **Counter** → expect **Props changed: count**.
+- Click **Counter** → expect **Props changed: count, onIncrement**.
 - Click **SearchBar** → expect **The parent component rendered**.
-- Click **TaskList** → expect **The parent component rendered**.
-- Click one **TaskItem** → expect **The parent component rendered**. Point out that every TaskItem bar is coloured, not grey.
-**Say:** "So a counter click, which has nothing to do with the list, caused TaskList and all 48 TaskItems to render. Their props didn't meaningfully change; React re-rendered them simply because App rendered. This is the unnecessary work."
+- Click **TaskList** → expect **Props changed: tasks, onToggle**.
+- Click one **TaskItem** → expect **Props changed: onToggle**. Point out that every TaskItem bar is coloured, not grey.
+**Say:** "So a counter click, which has nothing to do with the list, caused TaskList and all 48 TaskItems to render. No task data changed. The Profiler says onToggle changed, and TaskList also got a new tasks array. Those are new references created by App on every render, not real changes. This is the unnecessary work."
 
 **Do:** Switch the view dropdown to **Ranked**.
 **Say:** "Ranked view sorts components by render time for this commit." Read the top entries and the total commit duration shown in the right panel (e.g. "the commit took X ms"). Say the actual number.
@@ -161,7 +161,7 @@ Perform these exactly, in this order; you will repeat them identically after the
 
 ### 3c. Recording 2 — toggle one checkbox (list-related, but still over-rendering)
 **Do:** Reload. Start profiling. Click the checkbox on the **first** row once. Stop.
-**Do:** In Flamegraph, click a TaskItem that was **not** toggled → expect **The parent component rendered**. Click the toggled one → expect **Props changed: task**.
+**Do:** In Flamegraph, click a TaskItem that was **not** toggled → expect **Props changed: onToggle**. Click the toggled one → expect **Props changed: task, onToggle**.
 **Say:** "Toggling one task should, ideally, re-render just that one row. Instead all 48 rows render, again because the parent rendered."
 **Do:** Save as `profiling/before-toggle-first-row.json`.
 
@@ -180,7 +180,7 @@ Perform these exactly, in this order; you will repeat them identically after the
 **Do:** Go back to `src/App.tsx`. Trace lines 14, 20 and 41.
 **Say:** "Root cause, linking code to evidence:
 1. All three pieces of state live in App, so any state change re-renders App.
-2. None of the children are memoized, so React re-renders every child whenever App renders. That's exactly what the Profiler reported: 'The parent component rendered' for TaskList and every TaskItem.
+2. None of the children are memoized, so React re-renders every child whenever App renders. The Profiler confirms it: TaskList reported 'Props changed: tasks, onToggle' and every TaskItem 'Props changed: onToggle', although no task data changed.
 3. Even if I memoized TaskList and TaskItem on their own, it wouldn't help yet, because on line 14 visibleTasks is a new array on every render and on line 20 toggleTask is a new function on every render. Memo compares props by reference, so those props would look 'changed' on every counter click."
 
 **Say (options):** "Approaches I considered:
@@ -189,7 +189,7 @@ Perform these exactly, in this order; you will repeat them identically after the
 - **Option C — enable the React Compiler.** It automates memoization, but it's a build-tool change with a performance cost in dev, the README notes it is deliberately off, and it would hide the reasoning rather than show it.
 I'm choosing Option A because it fixes both the counter and toggle cases with four small, reviewable edits, and because I can verify each edit in the Profiler."
 
-**Say (plan):** "I'll make the change in two steps so the Profiler shows why each is needed: first memo(TaskItem) alone, which I expect will still re-render and tell me 'Props changed: onToggle'; then stabilise the props with useCallback and useMemo and memo TaskList."
+**Say (plan):** "I'll make the change in two steps so the Profiler shows why each is needed: first memo(TaskItem) alone, which I expect will still re-render all rows, because onToggle is still a new function; then stabilise the props with useCallback and useMemo and memo TaskList."
 
 ---
 
@@ -211,7 +211,7 @@ export default memo(TaskItem)
 **Do:** Save from the menu. **Say:** "I'll open the **File** menu in the menu bar and choose **Save** to save TaskItem.tsx." Pause one second. Then switch to Chrome. **Say:** "Vite hot-reloads the change, so the browser picks it up without me restarting the server." 
 
 **Do (evidence for why the next edit is needed):** In the Profiler, start profiling, click the counter once, stop. Click a TaskItem bar.
-**Say what you see.** Expected: TaskItems still render, and "Why did this render?" now says **Props changed: onToggle**. "memo did its job of comparing props, but onToggle is a different function each render, so it still re-rendered. That confirms the second half of the diagnosis."
+**Say what you see.** Expected: all 48 TaskItems still render, and "Why did this render?" still says **Props changed: onToggle**. In my measurements the render time did not improve, it was a median of 20.4 ms against 15.5 ms before. "memo compared the props, but onToggle is a different function each render, so memo could not skip anything. That confirms the second half of the diagnosis."
 **Do:** Optional save as `profiling/mid-memo-only-counter-click.json`.
 
 ### Edit 2 — `src/App.tsx`: stabilise `toggleTask` with useCallback
@@ -247,7 +247,7 @@ with
   }, [])
 ```
 **Do:** File → **Save** (say it). In Chrome: reload, start profiling, click the counter once, stop. Narrate each click as in Stage 3b.
-**Say what you see.** Expected: all TaskItem bars are now **grey** ("Did not render"), but **TaskList** still renders with "The parent component rendered". "The rows are fixed. TaskList itself still renders because it isn't memoized and because visibleTasks is a new array every time. Two more small edits."
+**Say what you see.** Expected: all TaskItem bars are now **grey** ("Did not render"), but **TaskList** still renders with **Props changed: tasks**. "The rows are fixed. TaskList itself still renders because it isn't memoized and visibleTasks is a new array every time. Two more small edits."
 
 ### Edit 3 — `src/App.tsx`: memoize `visibleTasks` with useMemo
 **Say:** "useMemo caches the filtered array and only recomputes when tasks or the normalized query change. That gives TaskList a stable prop when the counter changes."
@@ -365,19 +365,19 @@ These exact files were checked off camera: `npm run lint` passes and `npm run bu
 ### 6b. Recording — counter click
 **Do:** Reload. Start profiling. Click counter once. Stop.
 **Do:** Flamegraph: click **TaskList** and a **TaskItem**. Read the side panel.
-Expected: TaskList and all TaskItems are **grey**, side panel says the component **did not render** during this commit. App shows Hooks changed; Counter shows Props changed: count; SearchBar shows parent rendered.
+Expected: TaskList and all TaskItems are **grey**, side panel says the component **did not render** during this commit. App shows Hooks changed; Counter shows Props changed: count, onIncrement; SearchBar shows The parent component rendered.
 **Say the actual commit duration** from the right panel and compare it with the before number.
 **Do:** Save as `profiling/after-counter-click.json`; screenshot `profiling/after-counter-click.png`.
 
 ### 6c. Recording — toggle first row
 **Do:** Reload. Start profiling. Click first-row checkbox. Stop.
-Expected: TaskList renders (its tasks prop changed because tasks state changed), **one** TaskItem renders with "Props changed: task", the other 47 are grey.
+Expected: TaskList renders with "Props changed: tasks" because the tasks state changed, **one** TaskItem renders with "Props changed: task", the other 47 are grey.
 **Say:** "This is the correct amount of work: one row changed, one row rendered."
 **Do:** Save as `profiling/after-toggle-first-row.json`.
 
 ### 6d. Recording — search `d`
 **Do:** Reload. Start profiling. Type `d`. Stop.
-Expected: App, SearchBar, TaskList and the visible TaskItems render (their list membership changed; items that stay visible with the same task object may be grey). Say what you see.
+Expected: App, SearchBar and TaskList render; TaskList's reason is **Props changed: tasks** (a new filtered array). In my measurements none of the remaining TaskItems re-rendered, because useMemo and memo mean a row only renders when its own task or onToggle reference actually changes, and neither did here. Say what you actually see.
 **Do:** Save as `profiling/after-search-d.json`.
 
 ### 6e. Functional regression checks (say each result out loud)
@@ -419,7 +419,7 @@ If you stopped the dev server, restart it with `npm run dev` only if you still n
 
 Suggested content skeleton (replace every X with the real values you read):
 
-- **1. Summary:** A counter click (state unrelated to the list) re-rendered TaskList and all 48 TaskItems, reason "The parent component rendered". Fixed with memo on TaskItem and TaskList plus useCallback for toggleTask and useMemo for visibleTasks. After: counter click renders App, Counter and SearchBar only; TaskList and rows did not render. Commit time X ms → Y ms.
+- **1. Summary:** A counter click (state unrelated to the list) re-rendered TaskList and all 48 TaskItems, reason "Props changed: onToggle" on each row. Fixed with memo on TaskItem and TaskList plus useCallback for toggleTask and useMemo for visibleTasks. After: counter click renders App, Counter and SearchBar only; TaskList and rows did not render. Commit time X ms → Y ms.
 - **2. Environment:** React 19.3.1, React DOM 19.3.1, TypeScript 6.0.3, Vite 8.3.5, dev build, StrictMode on, Chrome <version from chrome://version>, React DevTools <version from chrome://extensions>, macOS <version from  → About This Mac>, machine model. Node 26.8.1, npm 11.19.0. 48 tasks.
 - **3. Original behaviour:** the five interactions from Stage 2a, functional but with full-list re-renders.
 - **4. Profiling method:** React DevTools Profiler, "Record why each component rendered" on, reload before each recording, one interaction per recording, three interactions before and after, N recordings total, same server/browser/settings.
