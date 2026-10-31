@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import Counter from './components/Counter'
 import SearchBar from './components/SearchBar'
 import TaskList from './components/TaskList'
@@ -17,13 +17,13 @@ function App() {
       task.category.toLowerCase().includes(normalizedQuery),
   )
 
-  const toggleTask = (id: number) => {
+  const toggleTask = useCallback((id: number) => {
     setTasks((current) =>
       current.map((task) =>
         task.id === id ? { ...task, done: !task.done } : task,
       ),
     )
-  }
+  }, [])
 
   return (
     <main className="app">
